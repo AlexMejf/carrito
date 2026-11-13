@@ -173,16 +173,19 @@ controlButtons.forEach(btn => {
   btn.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     btn.setPointerCapture(e.pointerId);
+    highlightButton(cmd, true);
     sendCommand(cmd);
   });
 
   const stopHandler = (e) => {
     e.preventDefault();
+    highlightButton(cmd, false);
     sendCommand('stop');
   };
 
   btn.addEventListener('pointerup', stopHandler);
   btn.addEventListener('pointercancel', stopHandler);
+  btn.addEventListener('lostpointercapture', stopHandler);
 });
 
 // Controles físicos en PC (W, A, S, D)
@@ -204,21 +207,30 @@ window.addEventListener('keyup', (e) => {
   if (dom.viewControl.classList.contains('hidden')) return;
 
   const key = e.key.toLowerCase();
-  if (validKeys.includes(key) && activeKey === key) {
-    activeKey = null;
-    sendCommand('stop');
+  if (validKeys.includes(key)) {
+    // Restaurar siempre el aspecto visual al soltar la tecla
     highlightButton(key, false);
+
+    // Lógica funcional intacta: solo detener el vehículo si la tecla soltada era la activa
+    if (activeKey === key) {
+      activeKey = null;
+      sendCommand('stop');
+    }
   }
 });
 
 function highlightButton(key, isActive) {
   const btn = document.querySelector(`.ctrl-btn[data-cmd="${key}"]`);
   if (!btn) return;
+  const isForward = key === 'w';
+  const activeBg = isForward ? 'bg-emerald-600' : 'bg-indigo-600';
+  const activeBorder = isForward ? 'border-emerald-600' : 'border-indigo-600';
+
   if (isActive) {
-    btn.classList.add('scale-95', 'bg-indigo-600', 'text-white', 'border-indigo-600');
+    btn.classList.add('scale-95', activeBg, 'text-white', activeBorder);
     btn.classList.remove('bg-white', 'text-slate-800', 'border-slate-200');
   } else {
-    btn.classList.remove('scale-95', 'bg-indigo-600', 'text-white', 'border-indigo-600');
+    btn.classList.remove('scale-95', 'bg-indigo-600', 'bg-emerald-600', 'text-white', 'border-indigo-600', 'border-emerald-600');
     btn.classList.add('bg-white', 'text-slate-800', 'border-slate-200');
   }
 }
