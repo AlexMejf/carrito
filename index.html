@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#f8fafc">
+  <title>IoT Rover Control</title>
+  <link rel="manifest" href="manifest.json">
+  
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- MQTT.js via CDN -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+
+  <style>
+    /* Bloqueo de selección y gestos del navegador en el mando */
+    .no-select {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+    }
+    body {
+      overscroll-behavior-y: contain;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans antialiased selection:bg-indigo-600 selection:text-white min-h-screen flex flex-col">
+
+  <!-- NAVBAR SUPERIOR FIJO (Sólido, sin blur) -->
+  <header class="fixed top-0 left-0 right-0 h-16 bg-white border-b border-slate-200 px-4 lg:px-8 flex items-center justify-between z-30">
+    <!-- Logo / Título -->
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white font-bold tracking-wider">
+        RC
+      </div>
+      <h1 class="font-bold text-lg tracking-tight text-slate-900 hidden sm:block">RoverTelemetry</h1>
+    </div>
+
+    <!-- Indicador de Estado (Broker + Gateway) -->
+    <div class="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
+      <span id="status-dot" class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+      <span id="status-text" class="text-xs font-semibold text-slate-700 uppercase tracking-wider">Desconectado</span>
+    </div>
+
+    <!-- Botones de Acción -->
+    <div class="flex items-center gap-2">
+      <button id="btn-config" aria-label="Configurar MQTT" class="p-2.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+        </svg>
+      </button>
+
+      <button id="btn-enter-control" class="bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-semibold text-sm px-4 py-2.5 rounded-xl shadow-sm transition-all flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <span>Controlar</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- VISTA 1: DASHBOARD PRINCIPAL (Jerarquía Plana - 1 solo nivel de celdas) -->
+  <main id="view-dashboard" class="flex-1 pt-24 pb-12 px-4 lg:px-8 max-w-7xl w-full mx-auto">
+    <div class="mb-6">
+      <h2 class="text-xl font-bold text-slate-900">Telemetría en Tiempo Real</h2>
+      <p class="text-sm text-slate-500">Lectura directa de los sensores del vehículo</p>
+    </div>
+
+    <!-- CSS Grid Plano (Cero Card-in-Card) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      
+      <!-- Celda 1: Batería -->
+      <div class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between text-slate-500 mb-4">
+          <span class="text-sm font-semibold uppercase tracking-wider">Batería</span>
+          <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+          </svg>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="val-bateria" class="text-4xl font-extrabold text-slate-900">--</span>
+          <span class="text-lg font-medium text-slate-500">%</span>
+        </div>
+      </div>
+
+      <!-- Celda 2: Velocidad -->
+      <div class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between text-slate-500 mb-4">
+          <span class="text-sm font-semibold uppercase tracking-wider">Velocidad</span>
+          <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="val-velocidad" class="text-4xl font-extrabold text-slate-900">--</span>
+          <span class="text-lg font-medium text-slate-500">m/s</span>
+        </div>
+      </div>
+
+      <!-- Celda 3: Distancia / Ultrasonido -->
+      <div class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between text-slate-500 mb-4">
+          <span class="text-sm font-semibold uppercase tracking-wider">Obstáculo (Frontal)</span>
+          <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+          </svg>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="val-distancia" class="text-4xl font-extrabold text-slate-900">--</span>
+          <span class="text-lg font-medium text-slate-500">cm</span>
+        </div>
+      </div>
+
+      <!-- Celda 4: Temperatura -->
+      <div class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between text-slate-500 mb-4">
+          <span class="text-sm font-semibold uppercase tracking-wider">Temperatura Chasis</span>
+          <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+          </svg>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="val-temp" class="text-4xl font-extrabold text-slate-900">--</span>
+          <span class="text-lg font-medium text-slate-500">°C</span>
+        </div>
+      </div>
+
+      <!-- Celda 5: Señal Wi-Fi (RSSI) -->
+      <div class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between text-slate-500 mb-4">
+          <span class="text-sm font-semibold uppercase tracking-wider">Señal Wi-Fi (RSSI)</span>
+          <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0"></path>
+          </svg>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="val-rssi" class="text-4xl font-extrabold text-slate-900">--</span>
+          <span class="text-lg font-medium text-slate-500">dBm</span>
+        </div>
+      </div>
+
+      <!-- Celda 6: Último Comando -->
+      <div class="bg-white border border-slate-200 rounded-xl p-6 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between text-slate-500 mb-4">
+          <span class="text-sm font-semibold uppercase tracking-wider">Último Estado Motor</span>
+          <svg class="w-5 h-5 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+          </svg>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="val-last-cmd" class="text-2xl font-bold text-indigo-600 uppercase font-mono">STOP</span>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- VISTA 2: MODO CONTROL FULLSCREEN (Oculta por defecto) -->
+  <section id="view-control" class="hidden fixed inset-0 bg-slate-50 z-50 flex-col justify-between p-4 sm:p-8 no-select">
+    
+    <!-- Barra superior del mando -->
+    <div class="flex items-center justify-between w-full max-w-6xl mx-auto">
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm">
+          <span id="ctrl-status-dot" class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+          <span id="ctrl-status-text" class="text-xs font-bold text-slate-700 uppercase">OFFLINE</span>
+        </div>
+        <div class="bg-white px-4 py-2 rounded-xl border border-slate-200 shadow-sm hidden sm:block">
+          <span class="text-xs text-slate-500 font-semibold uppercase mr-2">CMD Activo:</span>
+          <span id="ctrl-active-cmd" class="text-xs font-mono font-bold text-indigo-600">{"goto": "stop"}</span>
+        </div>
+      </div>
+
+      <button id="btn-exit-control" class="bg-white hover:bg-slate-100 active:scale-95 text-slate-900 border border-slate-200 font-semibold text-sm px-5 py-2.5 rounded-xl shadow-sm transition-all flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+        </svg>
+        <span>Salir</span>
+      </button>
+    </div>
+
+    <!-- Zona Central de Controles Ergonómicos (Dividido para ambos pulgares) -->
+    <div class="flex-1 flex items-center justify-between w-full max-w-6xl mx-auto my-4 gap-4">
+      
+      <!-- Pulgar Izquierdo: Dirección (Izquierda / Derecha) -->
+      <div class="flex items-center gap-4 sm:gap-6">
+        <button data-cmd="a" class="ctrl-btn w-24 h-24 sm:w-32 sm:h-32 bg-white border-2 border-slate-200 rounded-xl shadow-sm flex flex-col items-center justify-center gap-2 active:scale-95 active:bg-indigo-600 active:border-indigo-600 active:text-white transition-all text-slate-800">
+          <svg class="w-10 h-10 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7"></path>
+          </svg>
+          <span class="text-xs font-bold uppercase tracking-wider pointer-events-none">Izquierda (A)</span>
+        </button>
+
+        <button data-cmd="d" class="ctrl-btn w-24 h-24 sm:w-32 sm:h-32 bg-white border-2 border-slate-200 rounded-xl shadow-sm flex flex-col items-center justify-center gap-2 active:scale-95 active:bg-indigo-600 active:border-indigo-600 active:text-white transition-all text-slate-800">
+          <svg class="w-10 h-10 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"></path>
+          </svg>
+          <span class="text-xs font-bold uppercase tracking-wider pointer-events-none">Derecha (D)</span>
+        </button>
+      </div>
+
+      <!-- Pulgar Derecho: Tracción (Adelante / Atrás) -->
+      <div class="flex flex-col gap-4 sm:gap-6">
+        <button data-cmd="w" class="ctrl-btn w-28 h-24 sm:w-36 sm:h-28 bg-white border-2 border-slate-200 rounded-xl shadow-sm flex flex-col items-center justify-center gap-1 active:scale-95 active:bg-emerald-600 active:border-emerald-600 active:text-white transition-all text-slate-800">
+          <svg class="w-10 h-10 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 15l7-7 7 7"></path>
+          </svg>
+          <span class="text-xs font-bold uppercase tracking-wider pointer-events-none">Adelante (W)</span>
+        </button>
+
+        <button data-cmd="s" class="ctrl-btn w-28 h-24 sm:w-36 sm:h-28 bg-white border-2 border-slate-200 rounded-xl shadow-sm flex flex-col items-center justify-center gap-1 active:scale-95 active:bg-indigo-600 active:border-indigo-600 active:text-white transition-all text-slate-800">
+          <svg class="w-10 h-10 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"></path>
+          </svg>
+          <span class="text-xs font-bold uppercase tracking-wider pointer-events-none">Reversa (S)</span>
+        </button>
+      </div>
+
+    </div>
+
+    <!-- Pie del mando -->
+    <div class="text-center w-full">
+      <p class="text-xs font-medium text-slate-400">En PC usa las teclas <strong class="text-slate-600">W, A, S, D</strong>. Suelta para detener el vehículo.</p>
+    </div>
+  </section>
+
+  <!-- MODAL DE CONFIGURACIÓN MQTT (Sólido, sin blur) -->
+  <div id="modal-config" class="hidden fixed inset-0 bg-slate-900/50 z-50 items-center justify-center p-4">
+    <div class="bg-white border border-slate-200 rounded-xl max-w-md w-full p-6 shadow-md">
+      <div class="flex items-center justify-between mb-6">
+        <h3 class="text-lg font-bold text-slate-900">Configuración Broker MQTT</h3>
+        <button id="btn-close-modal" class="text-slate-400 hover:text-slate-600">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <form id="form-config" class="space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Protocolo</label>
+          <select id="cfg-protocol" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-indigo-600">
+            <option value="ws">ws:// (WebSockets Inseguro)</option>
+            <option value="wss">wss:// (WebSockets Seguro)</option>
+          </select>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="col-span-2">
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Host / IP</label>
+            <input type="text" id="cfg-host" required placeholder="192.168.1.100" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-indigo-600">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Puerto</label>
+            <input type="number" id="cfg-port" required placeholder="9001" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-indigo-600">
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Path (Opcional)</label>
+          <input type="text" id="cfg-path" placeholder="/mqtt" class="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-indigo-600">
+        </div>
+
+        <div class="pt-4 flex justify-end gap-2">
+          <button type="button" id="btn-cancel-modal" class="px-4 py-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-100">Cancelar</button>
+          <button type="submit" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-sm">Guardar y Conectar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Script Principal Externo -->
+  <script src="app.js" defer></script>
+</body>
+</html>
